@@ -1,34 +1,50 @@
 name: ci-rerun
 on:
   workflow_run:
-    workflows: ["fullsend"]
+    workflows: ["fullsend"]          # the shim workflow's name
     types: [completed]
+
 permissions: {}
+
 jobs:
   rerun:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     permissions:
-      actions: write
+      actions: write                 # read the run, download, re-run
+    env:
+      AGENT: ci-diagnose             # only this agent's runs matter here
     steps:
+      - name: Check this run is a ${{ env.AGENT }} run
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          name=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+            --jq --arg n "fullsend-$AGENT" '.artifacts[] | select(.name == $n) | .name' | head -1)
+          echo "artifact=$name" >> "$GITHUB_OUTPUT"
+          echo "${name:-no $AGENT result on run $RUN_ID; nothing to do}"
+
       - uses: actions/download-artifact@v4
-        continue-on-error: true
+        if: steps.find.outputs.artifact != ''
         with:
-          name: fullsend-ci-diagnose
+          name: ${{ steps.find.outputs.artifact }}
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
           path: result
-      - name: Rerun jobs the agent classified as flaky
+
+      - name: Re-run jobs the agent classified as flaky
+        if: steps.find.outputs.artifact != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          f=$(ls result/*/iteration-*/output/ci-diagnose-result.json 2>/dev/null | tail -1) || exit 0
+          f=$(ls result/*/iteration-*/output/ci-diagnose-result.json 2>/dev/null | sort -V | tail -1) || exit 0
           [ "$(jq -r .recommended_action "$f")" = retry ] || exit 0
           for id in $(jq -r '.retry_targets[].check_run_id' "$f"); do
             job=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id")
-            [ "$(jq -r .conclusion <<<"$job")" = failure ] || continue
+            [ "$(jq -r .conclusion <<<"$job")" = failure ] || continue     # confirm against the API
             run=$(jq -r .run_id <<<"$job")
-            [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_attempt)" -le 2 ] || continue
-            echo "rerun run=$run job=$id"
+            [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_attempt)" -le 2 ] || continue  # budget
             gh run rerun "$run" --job "$id" --repo "$GITHUB_REPOSITORY"
           done

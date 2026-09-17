@@ -22,7 +22,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           name=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
-            --jq --arg n "fullsend-$AGENT" '.artifacts[] | select(.name == $n) | .name' | head -1)
+            --jq '.artifacts[].name' | grep -Fx "fullsend-$AGENT" || true)
           echo "artifact=$name" >> "$GITHUB_OUTPUT"
           echo "${name:-no $AGENT result on run $RUN_ID; nothing to do}"
 

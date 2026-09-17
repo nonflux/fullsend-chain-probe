@@ -1,0 +1,32 @@
+# Stand-in for the fullsend shim: runs after ci completes, publishes a
+# ci-diagnose style result artifact naming the failed job. No rerun here.
+name: fullsend
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+permissions: {}
+jobs:
+  diagnose:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    steps:
+      - name: Write result artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          out=output/fs-cid-probe/iteration-1/output
+          mkdir -p "$out"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            --jq '{status:"diagnosed",recommended_action:"retry",
+                   retry_targets:[.jobs[]|select(.conclusion=="failure")|{check_name:.name,check_run_id:.id}]}' \
+            > "$out/ci-diagnose-result.json"
+          cat "$out/ci-diagnose-result.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fullsend-ci-diagnose
+          path: output

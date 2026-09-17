@@ -1,0 +1,34 @@
+name: ci-rerun
+on:
+  workflow_run:
+    workflows: ["fullsend"]
+    types: [completed]
+permissions: {}
+jobs:
+  rerun:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: fullsend-ci-diagnose
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: result
+      - name: Rerun jobs the agent classified as flaky
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          f=$(ls result/*/iteration-*/output/ci-diagnose-result.json 2>/dev/null | tail -1) || exit 0
+          [ "$(jq -r .recommended_action "$f")" = retry ] || exit 0
+          for id in $(jq -r '.retry_targets[].check_run_id' "$f"); do
+            job=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id")
+            [ "$(jq -r .conclusion <<<"$job")" = failure ] || continue
+            run=$(jq -r .run_id <<<"$job")
+            [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_attempt)" -le 2 ] || continue
+            echo "rerun run=$run job=$id"
+            gh run rerun "$run" --job "$id"
+          done

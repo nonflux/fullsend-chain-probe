@@ -1,0 +1,14 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  flaky-unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail on the first attempt only
+        run: |
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+          [ "$GITHUB_RUN_ATTEMPT" != "1" ] || { echo "simulated flake"; exit 1; }
